@@ -1,4 +1,4 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia, GroupChat } = require('whatsapp-web.js');
 const { phoneNumberFormatter } = require('./helper/formatter');
 const fs = require('fs');
 const express = require('express');
@@ -10,6 +10,8 @@ const multer = require('multer');
 const path = require('path');
 const https = require('https');
 const dns = require('dns');
+
+
 
 const storage = multer.diskStorage({
 	destination: 'uploads/',
@@ -44,7 +46,17 @@ app.get('/', (req, res) => {
 
 // initialize whatsapp and the example event
 client.on('message', async message => {
-	console.log(message);
+	//console.log(message);
+	const chat = await message.getChat();
+	console.log(chat)
+	if (!chat.isGroup) {
+		console.log('⛔ Ini bukan grup!');
+		return;
+	}
+
+	console.log('✅ Ini grup:', chat.name);
+	console.log('Participants:', chat.participants.length);
+
 	try {
 
 		const media = await message.downloadMedia();
@@ -61,9 +73,9 @@ client.on('message', async message => {
 			postData.append('message_type', message.type);
 		}
 
-		console.log(postData);
+		//console.log(postData);
 
-		const response = await axios.post(
+		/*const response = await axios.post(
 			'https://siva.sanf.co.id:5678/webhook/04706a72-8bf3-4ed3-ace1-8ac7a1005792',
 			postData.toString(),
 			{
@@ -72,7 +84,7 @@ client.on('message', async message => {
 				}
 			}
 		);
-		console.log('Response:', response.data);
+		console.log('Response:', response.data);*/
 	} catch (error) {
 		console.error('Error sending API request:', error);
 	}
@@ -332,6 +344,119 @@ app.post('/send-media-group', upload.single('media'), async (req, res) => {
 		res.status(500).json({ status: "false", details: error.message });
 	}
 });
+
+
+app.post('/list-member-group', async (req, res) => {
+	const { group_id } = req.body;
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	client.getChats().then((chats) => {
+		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
+		if (myGroup) {
+			const participants = myGroup.participants;
+
+			return res.json({
+				status: true,
+				message: 'Group Found.',
+				data: participants
+			});
+		}
+
+		return res.json({
+			status: false,
+			message: 'Group Not Found.',
+			group_id
+		});
+	});
+});
+
+app.post('/add-member-group', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	client.getChats().then((chats) => {
+		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
+		if (myGroup) {
+			myGroup.addParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
+			return res.json({
+				status: false,
+				message: 'Success Add participants.',
+				group_id
+			});
+		}
+
+		return res.json({
+			status: false,
+			message: 'Group Not Found.',
+			group_id
+		});
+	});
+});
+
+app.post('/remove-member-group', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	client.getChats().then((chats) => {
+		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
+		if (myGroup) {
+			myGroup.removeParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
+			return res.json({
+				status: false,
+				message: 'Success Remove participants.',
+				group_id
+			});
+		}
+
+		return res.json({
+			status: false,
+			message: 'Group Not Found.',
+			group_id
+		});
+	});
+});
+
 
 
 server.listen(PORT, () => {
