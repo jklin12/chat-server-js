@@ -1,3 +1,7 @@
 node_modules/
 .wwebjs_auth/
 yourFolderName/
+.wwebjs_auth_old/
+wa_session/
+.wwebjs_cache/
+.wwebjs_cache_old/
