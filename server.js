@@ -88,29 +88,76 @@ io.on('connection', (socket) => {
 });
 
 // Endpoint kirim pesan manual
-app.post('/send-message', (req, res) => {
+app.post('/send-message', async (req, res) => {
+	try {
+		// 1. Cek Client Ready
+		if (!isClientReady) {
+			return res.status(503).json({ status: false, message: 'Client not ready' });
+		}
 
-	if (!isClientReady) {
-		return res.status(500).json({ status: false, message: 'Client not ready' });
-	}
+		const { number, message } = req.body;
 
-	const number = phoneNumberFormatter(req.body.number);
-	const message = req.body.message;
+		// 2. Validasi Input
+		if (!number || !message) {
+			return res.status(400).json({ status: false, message: 'Invalid input' });
+		}
 
-	client.sendMessage(number, message)
-		.then(response => {
-			res.status(200).json({
-				status: true,
-				response: response
-			});
-		})
-		.catch(error => {
-			res.status(500).json({
+		const formattedNumber = phoneNumberFormatter(number);
+
+		// 3. Cek apakah user terdaftar (Safety First)
+		const isRegistered = await client.isRegisteredUser(formattedNumber);
+		if (!isRegistered) {
+			return res.status(422).json({
 				status: false,
-				response: error.toString()
+				message: 'Nomor tidak terdaftar di WhatsApp'
 			});
+		}
+
+		// 4. Ambil Object Chat
+		const chat = await client.getChatById(formattedNumber);
+
+		// --- INI YANG ANDA MINTA ---
+		// Jika object chat gagal diambil atau null
+		if (!chat) {
+			return res.status(404).json({
+				status: false,
+				message: 'Gagal mendapatkan object chat'
+			});
+		}
+		// ---------------------------
+
+		// 5. Typing Effect
+		await chat.sendStateTyping();
+
+		const typingDuration = calculateTypingDuration(message);
+		await sleep(typingDuration);
+
+		// 6. Kirim Pesan
+		const response = await client.sendMessage(formattedNumber, message);
+ 
+		res.status(200).json({
+			status: true,
+			response: response
 		});
+
+	} catch (error) {
+		console.error('Error:', error);
+		res.status(500).json({
+			status: false,
+			message: error.message
+		});
+	}
 });
+
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const calculateTypingDuration = (message) => {
+	// Estimasi 100ms per karakter
+	const duration = message.length * 100;
+	// Minimal 2 detik, Maksimal 10 detik
+	return Math.min(Math.max(duration, 2000), 10000);
+};
 
 // Jalankan server dan inisialisasi WhatsApp
 server.listen(PORT, () => {
