@@ -46,17 +46,6 @@ app.get('/', (req, res) => {
 
 // initialize whatsapp and the example event
 client.on('message', async message => {
-	//console.log(message);
-	const chat = await message.getChat();
-	console.log(chat)
-	if (!chat.isGroup) {
-		console.log('⛔ Ini bukan grup!');
-		return;
-	}
-
-	console.log('✅ Ini grup:', chat.name);
-	console.log('Participants:', chat.participants.length);
-
 	try {
 
 		const media = await message.downloadMedia();
@@ -75,7 +64,7 @@ client.on('message', async message => {
 
 		//console.log(postData);
 
-		/*const response = await axios.post(
+		const response = await axios.post(
 			'https://siva.sanf.co.id:5678/webhook/04706a72-8bf3-4ed3-ace1-8ac7a1005792',
 			postData.toString(),
 			{
@@ -84,7 +73,7 @@ client.on('message', async message => {
 				}
 			}
 		);
-		console.log('Response:', response.data);*/
+		console.log('Response:', response.data);
 	} catch (error) {
 		console.error('Error sending API request:', error);
 	}
@@ -100,6 +89,8 @@ io.on('connection', (socket) => {
 	socket.emit('message', `${now} Connected`);
 
 	client.on('qr', (qr) => {
+		console.log("QR");
+
 		qrcode.toDataURL(qr, (err, url) => {
 			socket.emit("qr", url);
 			socket.emit('message', `${now} QR Code received`);
@@ -107,27 +98,26 @@ io.on('connection', (socket) => {
 	});
 
 	client.on('ready', () => {
+		console.log("Ready");
 		socket.emit('message', `${now} WhatsApp is ready!`);
 	});
 
 	client.on('authenticated', (session) => {
+		console.log("authenticated");
 		socket.emit('message', `${now} Whatsapp is authenticated!`);
 
 	});
 
 	client.on('auth_failure', function (session) {
+		console.log("Auth failure, ");
 		socket.emit('message', `${now} Auth failure, restarting...`);
 	});
 
 	client.on('disconnected', function () {
+		console.log("disconnected ");
+
 		socket.emit('message', `${now} Disconnected`);
 
-	});
-
-	client.on('message', message => {
-		console.log(message.body);
-		//socket.emit('message', `${now} Pesan Masuk : ${message}`);
-		//client.sendMessage(message.from, 'pong');
 	});
 });
 
@@ -191,13 +181,13 @@ app.post('/send-message', (req, res) => {
 	}
 
 
-	const isConnected = client.info && client.info.wid;
-	if (!isConnected) {
+	//const isConnected = client.info && client.info.wid;
+	/*if (!isConnected) {
 		return res.status(400).json({
 			status: false,
 			message: "WhatsApp client is not connected. Please scan the QR Code first."
 		});
-	}
+	}*/
 
 	client.sendMessage(formattedNumber, message)
 		.then(response => {
@@ -357,24 +347,28 @@ app.post('/list-member-group', async (req, res) => {
 		});
 	}
 
-	client.getChats().then((chats) => {
-		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
-		if (myGroup) {
-			const participants = myGroup.participants;
+	const chat = await client.getChatById(group_id);
 
-			return res.json({
-				status: true,
-				message: 'Group Found.',
-				data: participants
-			});
-		}
+	if (chat.isGroup) {
+		console.log(`Mengambil data dari grup: ${chat.name}`);
 
+		// 3. Loop participants
+		chat.participants.forEach(member => {
+			console.log(`- ${member.id.user} (Admin: ${member.isAdmin})`);
+		});
+
+		return res.json({
+			status: true,
+			message: 'Group Found.',
+			data: chat.participants
+		});
+	} else {
 		return res.json({
 			status: false,
 			message: 'Group Not Found.',
 			group_id
 		});
-	});
+	}
 });
 
 app.post('/add-member-group', async (req, res) => {
@@ -398,22 +392,18 @@ app.post('/add-member-group', async (req, res) => {
 		});
 	}
 
-	client.getChats().then((chats) => {
-		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
-		if (myGroup) {
-			myGroup.addParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
-			return res.json({
-				status: false,
-				message: 'Success Add participants.',
-				group_id
-			});
-		}
-
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		chat.addParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
 		return res.json({
-			status: false,
-			message: 'Group Not Found.',
-			group_id
+			status: true,
+			message: 'Success Add participants.'
 		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
 	});
 });
 
@@ -438,22 +428,57 @@ app.post('/remove-member-group', async (req, res) => {
 		});
 	}
 
-	client.getChats().then((chats) => {
-		const myGroup = chats.find((chat) => chat.id._serialized === group_id);
-		if (myGroup) {
-			myGroup.removeParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
-			return res.json({
-				status: false,
-				message: 'Success Remove participants.',
-				group_id
-			});
-		}
-
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		chat.removeParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
 		return res.json({
-			status: false,
-			message: 'Group Not Found.',
-			group_id
+			status: true,
+			message: 'Success Remove participants.'
 		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
+	});
+});
+
+
+app.post('/send-invitation-link', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		const code = await chat.getInviteCode();
+
+		client.sendMessage(formattedNumber, `AAnda diundang ke grup ${chat.name}. Gunakan link ini untuk bergabung: https://chat.whatsapp.com/${code}`);
+		return res.json({
+			status: true,
+			message: `Success Add participants. ${code}`
+		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
 	});
 });
 
