@@ -238,6 +238,9 @@ app.post('/send-media', upload.single('media'), async (req, res) => {
 				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
 			}
 			const media = MessageMedia.fromFilePath(filePath);
+			if (req.file && req.file.originalname) {
+				media.filename = req.file.originalname;
+			}
 			await client.sendMessage(formattedNumber, media, { caption: caption || '' })
 				.then(response => {
 					res.status(200).json({
@@ -300,6 +303,9 @@ app.post('/send-media-group', upload.single('media'), async (req, res) => {
 				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
 			}
 			const media = MessageMedia.fromFilePath(filePath);
+			if (req.file && req.file.originalname) {
+				media.filename = req.file.originalname;
+			}
 			await client.sendMessage(group_id, media, { caption: caption || '' })
 				.then(response => {
 					res.status(200).json({
@@ -482,6 +488,86 @@ app.post('/send-invitation-link', async (req, res) => {
 	});
 });
 
+
+
+
+app.post('/check-group-name', async (req, res) => {
+	const { group_id } = req.body;
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	try {
+		const chat = await client.getChatById(group_id);
+
+		if (chat.isGroup) {
+			return res.json({
+				status: true,
+				message: 'Group Found.',
+				data: {
+					name: chat.name,
+					id: chat.id._serialized,
+					participants: chat.participants.length
+				}
+			});
+		} else {
+			return res.json({
+				status: false,
+				message: 'Group Not Found or ID is not a group.',
+				group_id
+			});
+		}
+	} catch (error) {
+		return res.status(500).json({
+			status: false,
+			message: 'Error fetching group.',
+			error: error.message
+		});
+	}
+});
+
+app.post('/rename-group', async (req, res) => {
+	const { group_id, new_name } = req.body;
+
+	if (!group_id || !new_name) {
+		return res.status(400).json({
+			status: false,
+			message: "Fields 'group_id' and 'new_name' are required."
+		});
+	}
+
+	try {
+		const chat = await client.getChatById(group_id);
+
+		if (chat.isGroup) {
+			await chat.setSubject(new_name);
+			return res.json({
+				status: true,
+				message: 'Group name updated successfully.',
+				data: {
+					old_name: chat.name,
+					new_name: new_name
+				}
+			});
+		} else {
+			return res.json({
+				status: false,
+				message: 'Group Not Found or ID is not a group.',
+				group_id
+			});
+		}
+	} catch (error) {
+		return res.status(500).json({
+			status: false,
+			message: 'Error updating group name.',
+			error: error.message
+		});
+	}
+});
 
 
 server.listen(PORT, () => {
