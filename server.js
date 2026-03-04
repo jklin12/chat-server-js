@@ -569,6 +569,38 @@ app.post('/rename-group', async (req, res) => {
 	}
 });
 
+app.post('/telegram-webhook', async (req, res) => {
+	try {
+		// Menangkap payload dari Telegram
+		const payload = req.body;
+		console.log('Received Telegram Webhook:', JSON.stringify(payload, null, 2));
+
+		// URL tujuan rute sistem internal (Silakan sesuaikan dengan URL webhook n8n atau internal system Anda)
+		const internalSystemUrl = 'https://siva.sanf.co.id:5678/webhook/721d0b19-09d7-4121-adc2-5e91fd738467/webhook';
+
+		// Relay payload ke sistem internal
+		const response = await axios.post(
+			internalSystemUrl,
+			payload,
+			{
+				headers: {
+					'Content-Type': 'application/json'
+				}
+			}
+		);
+
+		console.log('Response from internal system:', response.data);
+
+		// Wajib mengembalikan status 200 OK ke Telegram agar webhook tidak di-retry
+		res.status(200).send('OK');
+	} catch (error) {
+		console.error('Error relaying Telegram webhook:', error.message);
+
+		// Bisa mengembalikan status 200 jika tidak ingin Telegram meretry pesan yang gagal diproses,
+		// atau 500 jika Telegram perlu meretry. Di sini kita menggunakan 500 sebagai default error.
+		res.status(500).send('Internal Server Error');
+	}
+});
 
 server.listen(PORT, () => {
 	console.log('App listen on port ', PORT);
