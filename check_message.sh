@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # URL endpoint
-URL="http://wa.banjarbaru-bagawi.id/send-message"
+URL="http://172.16.203.12:5003/send-message"
 
 
 # Data yang dikirim
@@ -14,4 +14,3 @@ curl --location "$URL" \
 --header "Content-Type: application/x-www-form-urlencoded" \
 --data-urlencode "number=$NUMBER" \
 --data-urlencode "message=$MESSAGE"
-
