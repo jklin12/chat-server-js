@@ -295,12 +295,15 @@ app.post('/send-message', (req, res) => {
 });
 
 
-app.post('/send-media', upload.single('media'), async (req, res) => {
+app.post('/send-media', upload.any(), async (req, res) => {
 	try {
 		const { number, caption, url } = req.body;
 
+		// Ambil file dari array yang ditangkap upload.any()
+		let file = req.files && req.files.length > 0 ? req.files[0] : null;
+
 		if (!number) {
-			return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+			return res.status(400).json({ error: "Both 'number' and 'file/url' fields are required" });
 		}
 
 		const formattedNumber = phoneNumberFormatter(number);
@@ -323,10 +326,10 @@ app.post('/send-media', upload.single('media'), async (req, res) => {
 
 
 		if (!url) {
-			const filePath = req.file.path;
-			if (!filePath) {
-				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+			if (!file) {
+				return res.status(400).json({ error: "File upload is missing (or 'url' is not provided)" });
 			}
+			const filePath = file.path;
 			const media = MessageMedia.fromFilePath(filePath);
 			if (req.file && req.file.originalname) {
 				media.filename = req.file.originalname;
@@ -366,14 +369,17 @@ app.post('/send-media', upload.single('media'), async (req, res) => {
 	}
 });
 
-app.post('/send-media-group', upload.single('media'), async (req, res) => {
+app.post('/send-media-group', upload.any(), async (req, res) => {
 	try {
 		const { group_id, caption, url } = req.body;
+
+		// Ambil file dari array yang ditangkap upload.any()
+		let file = req.files && req.files.length > 0 ? req.files[0] : null;
 
 		if (!group_id) {
 			return res.status(400).json({
 				status: false,
-				message: "Both 'group_id' and 'url' fields are required."
+				message: "Both 'group_id' and 'file/url' fields are required."
 			});
 		}
 
@@ -388,10 +394,10 @@ app.post('/send-media-group', upload.single('media'), async (req, res) => {
 
 
 		if (!url) {
-			const filePath = req.file.path;
-			if (!filePath) {
-				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+			if (!file) {
+				return res.status(400).json({ error: "File upload is missing (or 'url' is not provided)" });
 			}
+			const filePath = file.path;
 			const media = MessageMedia.fromFilePath(filePath);
 			if (req.file && req.file.originalname) {
 				media.filename = req.file.originalname;
