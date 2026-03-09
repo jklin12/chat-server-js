@@ -44,6 +44,46 @@ app.get('/', (req, res) => {
 	res.sendFile('index.html', { root: __dirname });
 });
 
+// Middleware untuk Basic Auth
+const basicAuth = (req, res, next) => {
+	// Pengecualian endpoint yang tidak memerlukan auth
+	if (req.path === '/telegram-webhook') {
+		return next();
+	}
+
+	const authHeader = req.headers['authorization'];
+	if (!authHeader) {
+		return res.status(401).json({ status: false, message: 'Akses ditolak. Header Authorization (Basic Auth) tidak ditemukan.' });
+	}
+
+	const [type, credentials] = authHeader.split(' ');
+	if (type !== 'Basic' || !credentials) {
+		return res.status(401).json({ status: false, message: 'Format Authorization tidak valid. Gunakan Basic Auth.' });
+	}
+
+	const decoded = Buffer.from(credentials, 'base64').toString('utf8');
+	const separatorIndex = decoded.indexOf(':');
+	if (separatorIndex === -1) {
+		return res.status(401).json({ status: false, message: 'Format kredensial tidak valid.' });
+	}
+	
+	const username = decoded.slice(0, separatorIndex);
+	const password = decoded.slice(separatorIndex + 1);
+
+	// Ambil dari environment variables atau gunakan default
+	const VALID_USER = process.env.BASIC_AUTH_USER || 'admin';
+	const VALID_PASS = process.env.BASIC_AUTH_PASS || 'admin123';
+
+	if (username === VALID_USER && password === VALID_PASS) {
+		return next();
+	}
+
+	return res.status(401).json({ status: false, message: 'Username atau Password salah.' });
+};
+
+// Terapkan middleware basicAuth ke semua endpoint API di bawah ini
+app.use(basicAuth);
+
 // initialize whatsapp and the example event
 client.on('message', async message => {
 	try {
