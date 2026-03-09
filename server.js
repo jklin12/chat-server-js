@@ -11,8 +11,6 @@ const path = require('path');
 const https = require('https');
 const dns = require('dns');
 
-
-
 const storage = multer.diskStorage({
 	destination: 'uploads/',
 	filename: (req, file, cb) => {
@@ -22,7 +20,6 @@ const storage = multer.diskStorage({
 	}
 });
 
-
 const upload = multer({ storage: storage });
 
 const PORT = process.env.PORT || 5003;
@@ -30,8 +27,54 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
+// Buat direktori auth yang bersih di path project
+const SESSION_DIR = path.join(__dirname, '.wwebjs_auth');
+
+// Hapus file SingletonLock secara paksa jika ada sebelum memulai
+const singletonLockPath = path.join(SESSION_DIR, 'session', 'Default', 'SingletonLock');
+if (fs.existsSync(singletonLockPath)) {
+	try {
+		fs.unlinkSync(singletonLockPath);
+		console.log('Force removed locked session file.');
+	} catch (err) {
+		console.error('Could not remove SingletonLock:', err);
+	}
+}
+
 const client = new Client({
-	authStrategy: new LocalAuth()
+	authStrategy: new LocalAuth({ clientId: "client-one" }),
+	puppeteer: {
+		headless: true,
+		userDataDir: SESSION_DIR, // Paksa gunakan custom auth dir
+		args: [
+			'--no-sandbox',
+			'--disable-setuid-sandbox',
+			'--disable-dev-shm-usage',
+			'--disable-accelerated-2d-canvas',
+			'--no-first-run',
+			'--no-zygote',
+			'--single-process', // Penting untuk VPS
+			'--disable-gpu'
+		]
+	}
+});
+
+// Penanganan Graceful Shutdown (Penting agar Chromium tidak menggantung saat dimatikan)
+process.on('SIGINT', async () => {
+	console.log('(SIGINT) Shutting down gracefully...');
+	if (client) {
+		await client.destroy();
+	}
+	process.exit(0);
+});
+
+// Penanganan untuk PM2/Nodemon
+process.on('SIGTERM', async () => {
+	console.log('(SIGTERM) Shutting down gracefully...');
+	if (client) {
+		await client.destroy();
+	}
+	process.exit(0);
 });
 
 
@@ -66,7 +109,7 @@ const basicAuth = (req, res, next) => {
 	if (separatorIndex === -1) {
 		return res.status(401).json({ status: false, message: 'Format kredensial tidak valid.' });
 	}
-	
+
 	const username = decoded.slice(0, separatorIndex);
 	const password = decoded.slice(separatorIndex + 1);
 
