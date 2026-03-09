@@ -41,21 +41,28 @@ if (fs.existsSync(singletonLockPath)) {
 	}
 }
 
+const os = require('os');
+
+const puppeteerArgs = [
+	'--no-sandbox',
+	'--disable-setuid-sandbox',
+	'--disable-dev-shm-usage',
+	'--disable-accelerated-2d-canvas',
+	'--no-first-run',
+	'--no-zygote',
+	'--disable-gpu'
+];
+
+// '--single-process' sering membuat crash Chrome di Windows, sehingga argumen ini hanya di-push di environment Linux/VPS.
+if (os.platform() !== 'win32') {
+	puppeteerArgs.push('--single-process');
+}
+
 const client = new Client({
 	authStrategy: new LocalAuth({ clientId: "client-one" }),
 	puppeteer: {
 		headless: true,
-		userDataDir: SESSION_DIR, // Paksa gunakan custom auth dir
-		args: [
-			'--no-sandbox',
-			'--disable-setuid-sandbox',
-			'--disable-dev-shm-usage',
-			'--disable-accelerated-2d-canvas',
-			'--no-first-run',
-			'--no-zygote',
-			'--single-process', // Penting untuk VPS
-			'--disable-gpu'
-		]
+		args: puppeteerArgs
 	}
 });
 
