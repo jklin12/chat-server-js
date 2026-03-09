@@ -1,14 +1,29 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia, GroupChat } = require('whatsapp-web.js');
 const { phoneNumberFormatter } = require('./helper/formatter');
 const fs = require('fs');
 const express = require('express');
 const qrcode = require('qrcode');
 const socketIO = require('socket.io');
 const http = require('http');
-const { EventEmitter } = require('events');
+const axios = require('axios');
+const multer = require('multer');
+const path = require('path');
+const https = require('https');
+const dns = require('dns');
 
-// Opsional: Tingkatkan limit EventEmitter jika perlu
-EventEmitter.defaultMaxListeners = 20;
+
+
+const storage = multer.diskStorage({
+	destination: 'uploads/',
+	filename: (req, file, cb) => {
+		const ext = path.extname(file.originalname); // Ambil ekstensi file
+		const fileName = `${Date.now()}${ext}`; // Buat nama file dengan timestamp
+		cb(null, fileName);
+	}
+});
+
+
+const upload = multer({ storage: storage });
 
 const PORT = process.env.PORT || 5003;
 
@@ -20,12 +35,7 @@ let isClientReady = false;
 
 // Inisialisasi WhatsApp Client
 const client = new Client({
-	puppeteer: {
-		args: ['--no-sandbox', '--disable-setuid-sandbox'],
-	},
-	authStrategy: new LocalAuth({
-		dataPath: 'wa_session'
-	})
+	authStrategy: new LocalAuth()
 });
 
 // Middleware express
@@ -37,67 +47,144 @@ app.get('/', (req, res) => {
 	res.sendFile('index.html', { root: __dirname });
 });
 
-// WhatsApp Event Handler
-client.on('qr', (qr) => {
-	qrcode.toDataURL(qr, (err, url) => {
-		io.emit("qr", url);
-		io.emit('message', `${new Date().toLocaleString()} QR Code received`);
-	});
+// Middleware untuk Basic Auth
+const basicAuth = (req, res, next) => {
+	// Pengecualian endpoint yang tidak memerlukan auth
+	if (req.path === '/telegram-webhook') {
+		return next();
+	}
+
+	const authHeader = req.headers['authorization'];
+	if (!authHeader) {
+		return res.status(401).json({ status: false, message: 'Akses ditolak. Header Authorization (Basic Auth) tidak ditemukan.' });
+	}
+
+	const [type, credentials] = authHeader.split(' ');
+	if (type !== 'Basic' || !credentials) {
+		return res.status(401).json({ status: false, message: 'Format Authorization tidak valid. Gunakan Basic Auth.' });
+	}
+
+	const decoded = Buffer.from(credentials, 'base64').toString('utf8');
+	const separatorIndex = decoded.indexOf(':');
+	if (separatorIndex === -1) {
+		return res.status(401).json({ status: false, message: 'Format kredensial tidak valid.' });
+	}
+	
+	const username = decoded.slice(0, separatorIndex);
+	const password = decoded.slice(separatorIndex + 1);
+
+	// Ambil dari environment variables atau gunakan default
+	const VALID_USER = process.env.BASIC_AUTH_USER || 'admin';
+	const VALID_PASS = process.env.BASIC_AUTH_PASS || 'admin123';
+
+	if (username === VALID_USER && password === VALID_PASS) {
+		return next();
+	}
+
+	return res.status(401).json({ status: false, message: 'Username atau Password salah.' });
+};
+
+// Terapkan middleware basicAuth ke semua endpoint API di bawah ini
+app.use(basicAuth);
+
+// initialize whatsapp and the example event
+client.on('message', async message => {
+	try {
+
+		const media = await message.downloadMedia();
+
+		const postData = new URLSearchParams();
+		postData.append('from', message.from);
+		postData.append('message', message.body);
+		postData.append('has_quote', message.hasQuotedMsg);
+		postData.append('quote_message_id', message._data.quotedStanzaID);
+		postData.append('quote_message', message._data.quotedMsg?.body);
+
+		if (message.hasMedia || message.type === 'ptt') {
+			postData.append('media', media.data);
+			postData.append('message_type', message.type);
+		}
+
+		//console.log(postData);
+
+		const response = await axios.post(
+			'https://siva.sanf.co.id:5678/webhook/04706a72-8bf3-4ed3-ace1-8ac7a1005792',
+			postData.toString(),
+			{
+				headers: {
+					'Content-Type': 'application/x-www-form-urlencoded'
+				}
+			}
+		);
+		console.log('Response:', response.data);
+	} catch (error) {
+		console.error('Error sending API request:', error);
+	}
+
 });
 
-client.on('ready', () => {
-	isClientReady = true;
-	io.emit('message', `${new Date().toLocaleString()} WhatsApp is ready!`);
-});
-
-client.on('authenticated', () => {
-	io.emit('message', `${new Date().toLocaleString()} WhatsApp is authenticated!`);
-});
-
-client.on('auth_failure', () => {
-	console.log('Authentication failure, restarting...');
-
-	io.emit('message', `${new Date().toLocaleString()} Auth failure, restarting...`);
-});
-
-client.on('disconnected', () => {
-	console.log('Disconnected from WhatsApp');
-
-	io.emit('message', `${new Date().toLocaleString()} Disconnected`);
-});
-
-client.on('loading_screen', (percent, message) => {
-	console.log('LOADING SCREEN', percent, message);
-});
-
-
-// Balasan otomatis
-client.on('message', msg => {
-	/*console.log(msg.body);
-	if (msg.body === '!ping') {
-		msg.reply('pong');
-	} else if (msg.body === 'skuy') {
-		msg.reply('helo ma bradah');
-	}*/
-});
+client.initialize();
 
 // Socket.IO connection
 io.on('connection', (socket) => {
 	const now = new Date().toLocaleString();
 	socket.emit('message', `${now} Connected`);
+
+	client.on('qr', (qr) => {
+		console.log("QR");
+
+		qrcode.toDataURL(qr, (err, url) => {
+			socket.emit("qr", url);
+			socket.emit('message', `${now} QR Code received`);
+		});
+	});
+
+	client.on('ready', () => {
+		console.log("Ready");
+		socket.emit('message', `${now} WhatsApp is ready!`);
+	});
+
+	client.on('authenticated', (session) => {
+		console.log("authenticated");
+		socket.emit('message', `${now} Whatsapp is authenticated!`);
+
+	});
+
+	client.on('auth_failure', function (session) {
+		console.log("Auth failure, ");
+		socket.emit('message', `${now} Auth failure, restarting...`);
+	});
+
+	client.on('disconnected', function () {
+		console.log("disconnected ");
+
+		socket.emit('message', `${now} Disconnected`);
+
+	});
 });
 
-// Endpoint kirim pesan manual
-app.post('/send-message', (req, res) => {
+// send message group routing
+app.post('/send-message-group', (req, res) => {
+	const { group_id, message } = req.body;
 
-	if (!isClientReady) {
-		return res.status(500).json({ status: false, message: 'Client not ready' });
+	// Validasi input
+	if (!group_id || !message) {
+		return res.status(400).json({
+			status: false,
+			message: "Both 'group_id' and 'message' fields are required."
+		});
 	}
 
-	const number = phoneNumberFormatter(req.body.number);
-	const message = req.body.message;
 
-	client.sendMessage(number, message)
+	const isConnected = client.info && client.info.wid;
+	if (!isConnected) {
+		return res.status(400).json({
+			status: false,
+			message: "WhatsApp client is not connected. Please scan the QR Code first."
+		});
+	}
+
+	client.sendMessage(group_id, message)
 		.then(response => {
 			res.status(200).json({
 				status: true,
@@ -105,14 +192,458 @@ app.post('/send-message', (req, res) => {
 			});
 		})
 		.catch(error => {
-			res.status(500).json({
-				status: false,
+			res.status(200).json({
+				status: "false",
 				response: error.toString()
 			});
 		});
 });
 
-// Jalankan server dan inisialisasi WhatsApp
+// send message routing
+app.post('/send-message', (req, res) => {
+	const { number, message } = req.body;
+
+	// Validasi input
+	if (!number || !message) {
+		return res.status(400).json({
+			status: false,
+			message: "Both 'number' and 'message' fields are required."
+		});
+	}
+
+	// Validasi apakah nomor sesuai format
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	//const isConnected = client.info && client.info.wid;
+	/*if (!isConnected) {
+		return res.status(400).json({
+			status: false,
+			message: "WhatsApp client is not connected. Please scan the QR Code first."
+		});
+	}*/
+
+	client.sendMessage(formattedNumber, message)
+		.then(response => {
+			res.status(200).json({
+				status: true,
+				response: response
+			});
+		})
+		.catch(error => {
+			res.status(200).json({
+				status: "false",
+				response: error.toString()
+			});
+		});
+});
+
+
+app.post('/send-media', upload.single('media'), async (req, res) => {
+	try {
+		const { number, caption, url } = req.body;
+
+		if (!number) {
+			return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+		}
+
+		const formattedNumber = phoneNumberFormatter(number);
+		const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+		if (!numberRegex.test(number)) {
+			return res.status(400).json({
+				status: false,
+				message: "Invalid phone number format. Only numeric values are allowed."
+			});
+		}
+
+		const isConnected = client.info && client.info.wid;
+		if (!isConnected) {
+			return res.status(400).json({
+				status: false,
+				message: "WhatsApp client is not connected. Please scan the QR Code first."
+			});
+		}
+
+
+		if (!url) {
+			const filePath = req.file.path;
+			if (!filePath) {
+				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+			}
+			const media = MessageMedia.fromFilePath(filePath);
+			if (req.file && req.file.originalname) {
+				media.filename = req.file.originalname;
+			}
+			await client.sendMessage(formattedNumber, media, { caption: caption || '' })
+				.then(response => {
+					res.status(200).json({
+						status: true,
+						response: response
+					});
+				})
+				.catch(error => {
+					res.status(200).json({
+						status: "false",
+						response: error.toString()
+					});
+				});
+			fs.unlinkSync(filePath);
+		} else {
+			const media = await MessageMedia.fromUrl(url);
+			await client.sendMessage(formattedNumber, media, { caption: caption || '' })
+				.then(response => {
+					res.status(200).json({
+						status: true,
+						response: response
+					});
+				})
+				.catch(error => {
+					res.status(200).json({
+						status: "false",
+						response: error.toString()
+					});
+				});
+		}
+	} catch (error) {
+		res.status(500).json({ status: "false", details: error.message });
+	}
+});
+
+app.post('/send-media-group', upload.single('media'), async (req, res) => {
+	try {
+		const { group_id, caption, url } = req.body;
+
+		if (!group_id) {
+			return res.status(400).json({
+				status: false,
+				message: "Both 'group_id' and 'url' fields are required."
+			});
+		}
+
+
+		const isConnected = client.info && client.info.wid;
+		if (!isConnected) {
+			return res.status(400).json({
+				status: false,
+				message: "WhatsApp client is not connected. Please scan the QR Code first."
+			});
+		}
+
+
+		if (!url) {
+			const filePath = req.file.path;
+			if (!filePath) {
+				return res.status(400).json({ error: "Both 'number' and 'file' fields are required" });
+			}
+			const media = MessageMedia.fromFilePath(filePath);
+			if (req.file && req.file.originalname) {
+				media.filename = req.file.originalname;
+			}
+			await client.sendMessage(group_id, media, { caption: caption || '' })
+				.then(response => {
+					res.status(200).json({
+						status: true,
+						response: response
+					});
+				})
+				.catch(error => {
+					res.status(200).json({
+						status: "false",
+						response: error.toString()
+					});
+				});
+			fs.unlinkSync(filePath);
+		} else {
+			const media = await MessageMedia.fromUrl(url);
+			await client.sendMessage(group_id, media, { caption: caption || '' })
+				.then(response => {
+					res.status(200).json({
+						status: true,
+						response: response
+					});
+				})
+				.catch(error => {
+					res.status(200).json({
+						status: "false",
+						response: error.toString()
+					});
+				});
+		}
+	} catch (error) {
+		res.status(500).json({ status: "false", details: error.message });
+	}
+});
+
+
+app.post('/list-member-group', async (req, res) => {
+	const { group_id } = req.body;
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	const chat = await client.getChatById(group_id);
+
+	if (chat.isGroup) {
+		console.log(`Mengambil data dari grup: ${chat.name}`);
+
+		// 3. Loop participants
+		chat.participants.forEach(member => {
+			console.log(`- ${member.id.user} (Admin: ${member.isAdmin})`);
+		});
+
+		return res.json({
+			status: true,
+			message: 'Group Found.',
+			data: chat.participants
+		});
+	} else {
+		return res.json({
+			status: false,
+			message: 'Group Not Found.',
+			group_id
+		});
+	}
+});
+
+app.post('/add-member-group', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		chat.addParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
+		return res.json({
+			status: true,
+			message: 'Success Add participants.'
+		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
+	});
+});
+
+app.post('/remove-member-group', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		chat.removeParticipants([formattedNumber]); // Pass an array of contact IDs [id1, id2, id3 .....]
+		return res.json({
+			status: true,
+			message: 'Success Remove participants.'
+		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
+	});
+});
+
+
+app.post('/send-invitation-link', async (req, res) => {
+	const { group_id, number } = req.body;
+
+	const formattedNumber = phoneNumberFormatter(number);
+	const numberRegex = /^\d+$/; // Contoh: hanya angka
+
+	if (!numberRegex.test(number)) {
+		return res.status(400).json({
+			status: false,
+			message: "Invalid phone number format. Only numeric values are allowed."
+		});
+	}
+
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	const chat = await client.getChatById(group_id);
+	if (chat.isGroup) {
+		const code = await chat.getInviteCode();
+
+		client.sendMessage(formattedNumber, `AAnda diundang ke grup ${chat.name}. Gunakan link ini untuk bergabung: https://chat.whatsapp.com/${code}`);
+		return res.json({
+			status: true,
+			message: `Success Add participants. ${code}`
+		});
+	}
+
+	return res.json({
+		status: false,
+		message: 'Group Not Found.'
+	});
+});
+
+
+
+
+app.post('/check-group-name', async (req, res) => {
+	const { group_id } = req.body;
+
+	if (!group_id) {
+		return res.status(400).json({
+			status: false,
+			message: "Field 'group_id' is required."
+		});
+	}
+
+	try {
+		const chat = await client.getChatById(group_id);
+
+		if (chat.isGroup) {
+			return res.json({
+				status: true,
+				message: 'Group Found.',
+				data: {
+					name: chat.name,
+					id: chat.id._serialized,
+					participants: chat.participants.length
+				}
+			});
+		} else {
+			return res.json({
+				status: false,
+				message: 'Group Not Found or ID is not a group.',
+				group_id
+			});
+		}
+	} catch (error) {
+		return res.status(500).json({
+			status: false,
+			message: 'Error fetching group.',
+			error: error.message
+		});
+	}
+});
+
+app.post('/rename-group', async (req, res) => {
+	const { group_id, new_name } = req.body;
+
+	if (!group_id || !new_name) {
+		return res.status(400).json({
+			status: false,
+			message: "Fields 'group_id' and 'new_name' are required."
+		});
+	}
+
+	try {
+		const chat = await client.getChatById(group_id);
+
+		if (chat.isGroup) {
+			await chat.setSubject(new_name);
+			return res.json({
+				status: true,
+				message: 'Group name updated successfully.',
+				data: {
+					old_name: chat.name,
+					new_name: new_name
+				}
+			});
+		} else {
+			return res.json({
+				status: false,
+				message: 'Group Not Found or ID is not a group.',
+				group_id
+			});
+		}
+	} catch (error) {
+		return res.status(500).json({
+			status: false,
+			message: 'Error updating group name.',
+			error: error.message
+		});
+	}
+});
+
+app.post('/telegram-webhook', async (req, res) => {
+	try {
+		// Menangkap payload dari Telegram
+		const payload = req.body;
+		console.log('Received Telegram Webhook:', JSON.stringify(payload, null, 2));
+
+		// URL tujuan rute sistem internal (Silakan sesuaikan dengan URL webhook n8n atau internal system Anda)
+		const internalSystemUrl = 'https://siva.sanf.co.id:5678/webhook/721d0b19-09d7-4121-adc2-5e91fd738467/webhook';
+
+		// Relay payload ke sistem internal
+		const response = await axios.post(
+			internalSystemUrl,
+			payload,
+			{
+				headers: {
+					'Content-Type': 'application/json'
+				}
+			}
+		);
+
+		console.log('Response from internal system:', response.data);
+
+		// Wajib mengembalikan status 200 OK ke Telegram agar webhook tidak di-retry
+		res.status(200).send('OK');
+	} catch (error) {
+		console.error('Error relaying Telegram webhook:', error.message);
+
+		// Bisa mengembalikan status 200 jika tidak ingin Telegram meretry pesan yang gagal diproses,
+		// atau 500 jika Telegram perlu meretry. Di sini kita menggunakan 500 sebagai default error.
+		res.status(500).send('Internal Server Error');
+	}
+});
+
 server.listen(PORT, () => {
 	console.log(`App listening on port ${PORT}`);
 });
