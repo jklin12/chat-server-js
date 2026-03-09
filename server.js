@@ -45,8 +45,7 @@ if (fs.existsSync(singletonLockPath)) {
 const client = new Client({
 	authStrategy: new LocalAuth({ clientId: "client-one" }),
 	puppeteer: {
-		headless: true,
-		userDataDir: SESSION_DIR, // Paksa gunakan custom auth dir
+		headless: true, 
 		args: [
 			'--no-sandbox',
 			'--disable-setuid-sandbox',
@@ -203,43 +202,6 @@ io.on('connection', (socket) => {
 	});
 });
 
-<<<<<<< HEAD
-// Endpoint kirim pesan manual
-app.post('/send-message', async (req, res) => {
-	try {
-		// 1. Cek Client Ready
-		if (!isClientReady) {
-			return res.status(503).json({ status: false, message: 'Client not ready' });
-		}
-
-		const { number, message } = req.body;
-
-		// 2. Validasi Input
-		if (!number || !message) {
-			return res.status(400).json({ status: false, message: 'Invalid input' });
-		}
-
-		const formattedNumber = phoneNumberFormatter(number);
-
-		// 3. Cek apakah user terdaftar (Safety First)
-		const isRegistered = await client.isRegisteredUser(formattedNumber);
-		if (!isRegistered) {
-			return res.status(422).json({
-				status: false,
-				message: 'Nomor tidak terdaftar di WhatsApp'
-			});
-		}
-
-		// 4. Ambil Object Chat
-		const chat = await client.getChatById(formattedNumber);
-
-		// --- INI YANG ANDA MINTA ---
-		// Jika object chat gagal diambil atau null
-		if (!chat) {
-			return res.status(404).json({
-				status: false,
-				message: 'Gagal mendapatkan object chat'
-=======
 // send message group routing
 app.post('/send-message-group', (req, res) => {
 	const { group_id, message } = req.body;
@@ -277,49 +239,40 @@ app.post('/send-message-group', (req, res) => {
 });
 
 // send message routing
-app.post('/send-message', (req, res) => {
-	const { number, message } = req.body;
+app.post('/send-message', async (req, res) => {
+	try {
+		// 1. Cek Client Ready
+		if (!isClientReady) {
+			return res.status(503).json({ status: false, message: 'Client not ready' });
+		}
 
-	// Validasi input
-	if (!number || !message) {
-		return res.status(400).json({
-			status: false,
-			message: "Both 'number' and 'message' fields are required."
-		});
-	}
+		const { number, message } = req.body;
 
-	// Validasi apakah nomor sesuai format
-	const formattedNumber = phoneNumberFormatter(number);
-	const numberRegex = /^\d+$/; // Contoh: hanya angka
+		// 2. Validasi Input
+		if (!number || !message) {
+			return res.status(400).json({ status: false, message: 'Invalid input' });
+		}
 
-	if (!numberRegex.test(number)) {
-		return res.status(400).json({
-			status: false,
-			message: "Invalid phone number format. Only numeric values are allowed."
-		});
-	}
+		const formattedNumber = phoneNumberFormatter(number);
 
-
-	//const isConnected = client.info && client.info.wid;
-	/*if (!isConnected) {
-		return res.status(400).json({
-			status: false,
-			message: "WhatsApp client is not connected. Please scan the QR Code first."
-		});
-	}*/
-
-	client.sendMessage(formattedNumber, message)
-		.then(response => {
-			res.status(200).json({
-				status: true,
-				response: response
+		// 3. Cek apakah user terdaftar (Safety First)
+		const isRegistered = await client.isRegisteredUser(formattedNumber);
+		if (!isRegistered) {
+			return res.status(422).json({
+				status: false,
+				message: 'Nomor tidak terdaftar di WhatsApp'
 			});
-		})
-		.catch(error => {
-			res.status(200).json({
-				status: "false",
-				response: error.toString()
->>>>>>> 06815325c30b7fddf79aeef48b753072fa187afb
+		}
+
+		// 4. Ambil Object Chat
+		const chat = await client.getChatById(formattedNumber);
+
+		// --- INI YANG ANDA MINTA ---
+		// Jika object chat gagal diambil atau null
+		if (!chat) {
+			return res.status(404).json({
+				status: false,
+				message: 'Gagal mendapatkan object chat'
 			});
 		}
 		// ---------------------------
@@ -332,7 +285,7 @@ app.post('/send-message', (req, res) => {
 
 		// 6. Kirim Pesan
 		const response = await client.sendMessage(formattedNumber, message);
- 
+
 		res.status(200).json({
 			status: true,
 			response: response
@@ -347,19 +300,6 @@ app.post('/send-message', (req, res) => {
 	}
 });
 
-
-<<<<<<< HEAD
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const calculateTypingDuration = (message) => {
-	// Estimasi 100ms per karakter
-	const duration = message.length * 100;
-	// Minimal 2 detik, Maksimal 10 detik
-	return Math.min(Math.max(duration, 2000), 10000);
-};
-
-// Jalankan server dan inisialisasi WhatsApp
-=======
 app.post('/send-media', upload.single('media'), async (req, res) => {
 	try {
 		const { number, caption, url } = req.body;
@@ -757,7 +697,6 @@ app.post('/telegram-webhook', async (req, res) => {
 	}
 });
 
->>>>>>> 06815325c30b7fddf79aeef48b753072fa187afb
 server.listen(PORT, () => {
 	console.log(`App listening on port ${PORT}`);
 });
