@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # URL endpoint
-URL="http://172.16.203.12:5003/send-message"
+URL="http://wa.banjarbaru-bagawi.id/send-message"
 
 
 # Data yang dikirim

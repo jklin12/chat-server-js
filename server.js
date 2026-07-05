@@ -50,7 +50,8 @@ const puppeteerArgs = [
 	'--disable-accelerated-2d-canvas',
 	'--no-first-run',
 	'--no-zygote',
-	'--disable-gpu'
+	'--disable-gpu',
+	'--disable-features=site-per-process'
 ];
 
 // '--single-process' sering membuat crash Chrome di Windows, sehingga argumen ini hanya di-push di environment Linux/VPS.
@@ -63,8 +64,11 @@ const client = new Client({
 	puppeteer: {
 		headless: true,
 		args: puppeteerArgs
-	}
+	},
+	restartOnAuthFail: true
 });
+
+let isClientReady = false;
 
 // Penanganan Graceful Shutdown (Penting agar Chromium tidak menggantung saat dimatikan)
 process.on('SIGINT', async () => {
@@ -84,6 +88,10 @@ process.on('SIGTERM', async () => {
 	process.exit(0);
 });
 
+// ─── Helper ──────────────────────────────────────────────────────────────────
+function timestamp() {
+	return new Date().toLocaleString();
+}
 
 
 //const client = new Client({});
@@ -132,11 +140,12 @@ const basicAuth = (req, res, next) => {
 };
 
 // Terapkan middleware basicAuth ke semua endpoint API di bawah ini
-app.use(basicAuth);
+//app.use(basicAuth);
 
 // initialize whatsapp and the example event
 client.on('message', async message => {
-	try {
+	console.log('Message:', message);
+	/*try {
 
 		const media = await message.downloadMedia();
 
@@ -166,7 +175,7 @@ client.on('message', async message => {
 		console.log('Response:', response.data);
 	} catch (error) {
 		console.error('Error sending API request:', error);
-	}
+	}*/
 
 });
 
@@ -175,7 +184,59 @@ client.initialize();
 // socket connection
 var today = new Date();
 var now = today.toLocaleString();
+
+// ─── Client Events (didaftarkan SEKALI, di luar io.on('connection')) ─────────
+client.on('qr', (qr) => {
+	console.log('QR received');
+	qrcode.toDataURL(qr, (err, url) => {
+		if (err) return console.error('QR toDataURL error:', err);
+		io.emit('qr', url);
+		io.emit('message', `${timestamp()} QR Code received`);
+	});
+});
+
+client.on('ready', () => {
+	isClientReady = true;
+	console.log('Client ready');
+	io.emit('message', `${timestamp()} WhatsApp is ready!`);
+});
+
+client.on('authenticated', () => {
+	console.log('Authenticated');
+	io.emit('message', `${timestamp()} WhatsApp is authenticated!`);
+});
+
+client.on('auth_failure', () => {
+	isClientReady = false;
+	console.log('Auth failure');
+	io.emit('message', `${timestamp()} Auth failure, restarting...`);
+});
+
+client.on('disconnected', (reason) => {
+	isClientReady = false;
+	console.log('Client disconnected:', reason);
+	io.emit('message', `${timestamp()} Disconnected: ${reason}`);
+	setTimeout(() => {
+		console.log('Reinitializing client...');
+		client.initialize();
+	}, 5000);
+});
+
+// Handle error level Puppeteer page
+client.on('change_state', (state) => {
+	console.log('Client state changed:', state);
+});
+
 io.on('connection', (socket) => {
+	console.log('Socket connected:', socket.id);
+	socket.emit('message', `${timestamp()} Connected`);
+	// Kirim status WA saat ini ke client baru yang baru connect
+	if (isClientReady) {
+		socket.emit('message', `${timestamp()} WhatsApp is ready!`);
+	}
+});
+
+/*io.on('connection', (socket) => {
 	socket.emit('message', `${now} Connected`);
 
 	client.on('qr', (qr) => {
@@ -189,6 +250,7 @@ io.on('connection', (socket) => {
 
 	client.on('ready', () => {
 		console.log("Ready");
+		isClientReady = true;
 		socket.emit('message', `${now} WhatsApp is ready!`);
 	});
 
@@ -200,16 +262,21 @@ io.on('connection', (socket) => {
 
 	client.on('auth_failure', function (session) {
 		console.log("Auth failure, ");
+		isClientReady = false;
 		socket.emit('message', `${now} Auth failure, restarting...`);
 	});
 
-	client.on('disconnected', function () {
-		console.log("disconnected ");
-
+	client.on('disconnected', function (reason) {
+		console.log('Client disconnected:', reason);
+		isClientReady = false;
+		// Tunggu sebentar lalu reinitialize
+		setTimeout(() => {
+			client.initialize();
+		}, 5000);
 		socket.emit('message', `${now} Disconnected`);
 
 	});
-});
+});*/
 
 // send message group routing
 app.post('/send-message-group', (req, res) => {
@@ -270,14 +337,20 @@ app.post('/send-message', (req, res) => {
 		});
 	}
 
+	if (!isClientReady) {
+		return res.status(400).json({
+			status: false,
+			message: "WhatsApp client is not connected."
+		});
+	}
 
-	//const isConnected = client.info && client.info.wid;
-	/*if (!isConnected) {
+	const isConnected = client.info && client.info.wid;
+	if (!isConnected) {
 		return res.status(400).json({
 			status: false,
 			message: "WhatsApp client is not connected. Please scan the QR Code first."
 		});
-	}*/
+	}
 
 	client.sendMessage(formattedNumber, message)
 		.then(response => {
@@ -696,6 +769,30 @@ app.post('/telegram-webhook', async (req, res) => {
 		// atau 500 jika Telegram perlu meretry. Di sini kita menggunakan 500 sebagai default error.
 		res.status(500).send('Internal Server Error');
 	}
+});
+
+// ─── PM2 Restart Endpoint ─────────────────────────────────────────────────────
+app.post('/pm2-restart', (req, res) => {
+  const pm2 = require('pm2');
+
+  pm2.connect((err) => {
+    if (err) {
+      console.error('PM2 connect error:', err);
+      return res.status(500).json({ status: false, message: err.message });
+    }
+
+    // Ambil nama/id process dari env PM2, fallback ke 'app'
+    const processName = 'wa-api';
+
+    pm2.restart(processName, (err) => {
+      pm2.disconnect();
+      if (err) {
+        console.error('PM2 restart error:', err);
+        return res.status(500).json({ status: false, message: err.message });
+      }
+      res.json({ status: true, message: `Process "${processName}" restarted.` });
+    });
+  });
 });
 
 server.listen(PORT, () => {
