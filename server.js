@@ -413,7 +413,10 @@ client.on('disconnected', async (reason) => {
 			// "context destroyed" saat destroy setelah logout itu wajar — telan saja
 			console.log(timestamp(), 'Destroy setelah logout:', err.message);
 		}
-		io.emit('message', `${timestamp()} Logged out. Perlu scan QR ulang — restart proses (mis. via /pm2-restart atau pm2 restart).`);
+		// Keluar supaya supervisor (Docker restart policy / PM2 autorestart)
+		// menyalakan proses baru yang langsung menampilkan QR untuk scan ulang.
+		io.emit('message', `${timestamp()} Logged out. Restart otomatis, QR baru muncul sebentar lagi...`);
+		setTimeout(() => shutdown('LOGOUT'), 3000);
 		return;
 	}
 
@@ -891,6 +894,14 @@ app.post('/pm2-restart', (req, res) => {
 	const secret = process.env.PM2_RESTART_SECRET;
 	if (secret && req.headers['x-restart-secret'] !== secret) {
 		return res.status(403).json({ status: false, message: 'Invalid restart secret.' });
+	}
+
+	// Di Docker tidak ada daemon PM2 (pm_id tidak di-set): cukup exit, restart
+	// policy container yang menyalakan ulang prosesnya.
+	if (process.env.pm_id === undefined) {
+		res.json({ status: true, message: 'Process restarting.' });
+		setTimeout(() => shutdown('RESTART'), 500);
+		return;
 	}
 
 	const pm2 = require('pm2');

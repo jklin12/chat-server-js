@@ -1,0 +1,23 @@
+services:
+  wa-api:
+    build: .
+    image: wa-api:latest
+    container_name: wa-api
+    restart: unless-stopped
+    env_file: .env
+    # hapus lock Chromium sisa crash/recreate supaya profil session tidak dianggap "in use"
+    command: ["sh", "-c", "rm -f .wwebjs_auth/session-*/Singleton*; exec node server.js"]
+    # network host: CSF memblok host->bridge docker. Port 5003 tetap tertutup dari luar (tidak ada di TCP_IN CSF), diakses via nginx.
+    network_mode: host
+    volumes:
+      - ./.wwebjs_auth:/app/.wwebjs_auth
+      - ./.wwebjs_cache:/app/.wwebjs_cache
+      - ./uploads:/app/uploads
+    shm_size: 512m
+    mem_limit: 900m
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
