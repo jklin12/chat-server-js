@@ -12,5 +12,6 @@ MESSAGE="Test Koneksi - Tanggal dan Waktu: $CURRENT_DATE"
 # Eksekusi curl
 curl --location "$URL" \
 --header "Content-Type: application/x-www-form-urlencoded" \
+--header 'Authorization: Basic YWRtaW46NGRtaW5AdzR3M2I=' \
 --data-urlencode "number=$NUMBER" \
 --data-urlencode "message=$MESSAGE"
